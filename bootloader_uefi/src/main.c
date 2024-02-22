@@ -1,5 +1,8 @@
+#include <types.h>
 #include <gnu-efi/efi.h>
+#include <acpi.h>
 
+#define DEBUG
 #ifdef DEBUG
 VOID* memset(VOID* ptr, INT32 value, UINTN num) {
     UINT8* bytes = (UINT8*)ptr;
@@ -67,16 +70,74 @@ void PrintUINTNHex(UINTN value, EFI_SYSTEM_TABLE *SystemTable) {
 
     SystemTable->ConOut->OutputString(SystemTable->ConOut, str);
 }
+
+void PrintMemoryMapStarts(EFI_MEMORY_DESCRIPTOR *memoryMap, UINTN memoryMapSize, UINTN memoryMapDescriptorSize,
+		EFI_SYSTEM_TABLE *SystemTable) {
+	UINT8 *ptr = (UINT8 *)memoryMap;
+	UINT64 end = (UINTN)ptr + memoryMapSize;
+	for (; (UINTN) ptr < end; ptr += memoryMapDescriptorSize) {
+		EFI_MEMORY_DESCRIPTOR *desc = (EFI_MEMORY_DESCRIPTOR *)ptr;
+		PrintUINTNHex((UINTN) desc->PhysicalStart, SystemTable);
+		SystemTable->ConOut->OutputString(SystemTable->ConOut, L"  ");
+	}
+}
 #endif
 
-__attribute__((no_return)) void error(CHAR16 *str, EFI_SYSTEM_TABLE *SystemTable) {
+NO_RETURN void error(CHAR16 *str, EFI_SYSTEM_TABLE *SystemTable) {
 	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"ERROR: ");
 	SystemTable->ConOut->OutputString(SystemTable->ConOut, str);
 	for (; ; );
 }
 
+INTN CompareGuid(EFI_GUID *Guid1, EFI_GUID *Guid2) {
+	INT32 *g1, *g2, r;
+
+	g1 = (INT32 *)Guid1;
+	g2 = (INT32 *)Guid2;
+
+	r = g1[0] - g2[0];
+	r |= g1[1] - g2[1];
+	r |= g1[2] - g2[2];
+	r |= g1[3] - g2[3];
+
+	return r;
+}
+
+INTN CompareMem(CONST VOID *MemOne, CONST VOID *MemTwo, UINTN Len) {
+    UINT8 *ByteOne = (UINT8 *)MemOne;
+    UINT8 *ByteTwo = (UINT8 *)MemTwo;
+    UINTN i;
+
+    for (i = 0; i < Len; i++) {
+        if (ByteOne[i] != ByteTwo[i]) {
+            return ByteOne[i] > ByteTwo[i] ? 1 : -1;
+        }
+    }
+
+    return 0;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
+
+	EFI_CONFIGURATION_TABLE *config_table = SystemTable->ConfigurationTable;
+	UINTN config_entries = SystemTable->NumberOfTableEntries;
+	VOID *rsdp_addr = NULL;
+	EFI_GUID gEfiAcpiTableGuid = ACPI_20_TABLE_GUID;
+
+	for (UINTN i = 0; i < config_entries; i++) {
+		if (CompareGuid(&config_table[i].VendorGuid, &gEfiAcpiTableGuid) == 0) {
+			void *acpi_table = config_table[i].VendorTable;
+			if (CompareMem(acpi_table, "RSD PTR ", 8) == 0) {
+				rsdp_addr = acpi_table;
+			}
+		}
+	}
+
+	if (rsdp_addr == NULL)
+		error(L"Couldn't find ACPI RSDP address.", SystemTable);
+
+	ACPI_RSDP *rsdp = (ACPI_RSDP *)rsdp_addr;
 
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;
@@ -98,7 +159,7 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	}
 
 	if (SystemTable->BootServices->GetMemoryMap(&memoryMapSize, memoryMap, &memoryMapKey, &memoryMapDescriptorSize,
-			&memoryMapDescriptorVersion) != EFI_SUCCESS) {
+			&memoryMapDescriptorVersion) != EFI_SUCCESS || memoryMap == NULL) {
 		error(L"Final GetMemoryMap failed.", SystemTable);
 	}
 

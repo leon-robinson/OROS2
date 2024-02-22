@@ -9,7 +9,8 @@ override C_FLAGS := \
 	-ffreestanding \
 	-fshort-wchar \
 	-mno-red-zone \
-	-I inc/
+	-I inc/ \
+	-I ../inc/
 
 override LD_FLAGS := \
 	-target x86_64-unknown-windows \
