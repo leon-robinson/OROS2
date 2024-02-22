@@ -12,7 +12,7 @@ all:
 	sudo umount SYS
 	sudo rm -rf SYS/
 
-	sudo qemu-system-x86_64 -enable-kvm -cpu host -m 2G -bios /usr/share/ovmf/OVMF.fd -cdrom OROS.img -boot d
+	sudo qemu-system-x86_64 -enable-kvm -cpu host -smp 2 -m 2G -bios /usr/share/ovmf/OVMF.fd -cdrom OROS.img -boot d
 
 clean:
 	$(MAKE) -C bootloader_uefi clean
