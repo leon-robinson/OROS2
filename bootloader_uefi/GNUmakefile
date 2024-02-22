@@ -18,7 +18,7 @@ override LD_FLAGS := \
 	-Wl,-subsystem:efi_application \
 	-fuse-ld=lld-link
 
-.PHONY: all
+.PHONY: all clean
 
 all: $(C_OBJS)
 	clang $(LD_FLAGS) -o obj/BOOTX64.EFI $^
@@ -26,3 +26,6 @@ all: $(C_OBJS)
 obj/%.c.o: src/%.c
 	mkdir -p $(@D)
 	clang $(C_FLAGS) -o $@ -c $<
+
+clean:
+	rm -rf obj
