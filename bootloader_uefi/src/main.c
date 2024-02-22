@@ -109,6 +109,10 @@ INT16 SLP_EN = 0;
 BOOLEAN slp_set = false;
 
 ACPI_FADT *FADT = NULL;
+ACPI_MADT *MADT = NULL;
+
+UINT8 cpu_core_apic_ids[512];
+UINT8 cpu_core_apic_id_count = 0;
 
 void ParseFADT(ACPI_HEADER *hdr) {
 	FADT = (ACPI_FADT *)hdr;
@@ -129,11 +133,11 @@ void ParseFADT(ACPI_HEADER *hdr) {
 				s5_addr += ((*s5_addr & 0xC0) >> 6) + 2;
 				if (*s5_addr == 0x0A)
 					s5_addr++;
-				SLP_TYPa = (short)(*(s5_addr) << 10);
+				SLP_TYPa = (INT16)(*(s5_addr) << 10);
 				s5_addr++;
 				if (*s5_addr == 0x0A)
 					s5_addr++;
-				SLP_TYPb = (short)(*(s5_addr) << 10);
+				SLP_TYPb = (INT16)(*(s5_addr) << 10);
 				SLP_EN = 1 << 13;
 
 				slp_set = true;
@@ -145,7 +149,29 @@ void ParseFADT(ACPI_HEADER *hdr) {
 }
 
 void ParseMADT(ACPI_HEADER *hdr) {
+	MADT = (ACPI_MADT *)hdr;
 
+	UINT8 *p = (UINT8 *)(MADT + 1);
+	UINT8 *end = (UINT8 *)MADT + MADT->header.length;
+	while (p < end) {
+		APIC_HEADER *header = (APIC_HEADER *)p;
+		APIC_TYPE type = header->type;
+
+		switch (type) {
+			case APIC_TYPE_LOCAL_APIC:
+				APIC_LOCAL_APIC *lapic = (APIC_LOCAL_APIC *)p;
+				// Not enabled and online capable.
+				if ((lapic->flags & 1) ^ ((lapic->flags >> 1) & 1))
+					cpu_core_apic_ids[cpu_core_apic_id_count++] = lapic->apic_id;
+				break;
+			case APIC_TYPE_IO_APIC:
+				break;
+			case APIC_TYPE_INTERRUPT_OVERRIDE:
+				break;
+		}
+
+		p += header->length;
+	}
 }
 
 void ParseHPET(ACPI_HEADER *hdr) {
@@ -218,6 +244,12 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	PrintUINTNHex(SLP_TYPa, SystemTable);
 	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"   ");
 	PrintUINTNHex(SLP_TYPb, SystemTable);
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n\r");
+	for (int i = 0; i < cpu_core_apic_id_count; i++) {
+		SystemTable->ConOut->OutputString(SystemTable->ConOut, L"Found CPU core: ");
+		PrintUINTN(cpu_core_apic_ids[i], SystemTable);
+		SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n\r");
+	}
 
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;
