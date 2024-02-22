@@ -103,18 +103,76 @@ INTN CompareGuid(EFI_GUID *Guid1, EFI_GUID *Guid2) {
 	return r;
 }
 
-INTN CompareMem(CONST VOID *MemOne, CONST VOID *MemTwo, UINTN Len) {
-    UINT8 *ByteOne = (UINT8 *)MemOne;
-    UINT8 *ByteTwo = (UINT8 *)MemTwo;
-    UINTN i;
+INT16 SLP_TYPa = 0;
+INT16 SLP_TYPb = 0;
+INT16 SLP_EN = 0;
+BOOLEAN slp_set = false;
 
-    for (i = 0; i < Len; i++) {
-        if (ByteOne[i] != ByteTwo[i]) {
-            return ByteOne[i] > ByteTwo[i] ? 1 : -1;
-        }
-    }
+ACPI_FADT *FADT = NULL;
 
-    return 0;
+void ParseFADT(ACPI_HEADER *hdr) {
+	FADT = (ACPI_FADT *)hdr;
+
+	if (*(UINT32 *)(UINTN)FADT->dsdt == DSDT_SIGNATURE) {
+		UINT8 *s5_addr = (UINT8 *)(UINTN)FADT->dsdt + sizeof(ACPI_HEADER);
+		INT32 dsdt_length = *((INT32 *)(UINTN)FADT->dsdt + 1) - sizeof(ACPI_HEADER);
+
+		while (0 < dsdt_length--) {
+			if (*(UINT32 *)s5_addr == S5_SIGNATURE)
+				break;
+			s5_addr++;
+		}
+
+		if (dsdt_length > 0) {
+			if ((*(s5_addr - 1) == 0x08 || (*(s5_addr - 2) == 0x08 && *(s5_addr - 1) == '\\')) && *(s5_addr + 4) == 0x12) {
+				s5_addr += 5;
+				s5_addr += ((*s5_addr & 0xC0) >> 6) + 2;
+				if (*s5_addr == 0x0A)
+					s5_addr++;
+				SLP_TYPa = (short)(*(s5_addr) << 10);
+				s5_addr++;
+				if (*s5_addr == 0x0A)
+					s5_addr++;
+				SLP_TYPb = (short)(*(s5_addr) << 10);
+				SLP_EN = 1 << 13;
+
+				slp_set = true;
+
+				return;
+			}
+		}
+	}
+}
+
+void ParseMADT(ACPI_HEADER *hdr) {
+
+}
+
+void ParseHPET(ACPI_HEADER *hdr) {
+
+}
+
+void ParseMCFG(ACPI_HEADER *hdr) {
+
+}
+
+void ParseDT(ACPI_HEADER *hdr) {
+	UINT32 signature = *(UINT32 *)hdr->signature;
+
+	switch (signature) {
+		case FADT_SIGNATURE:
+			ParseFADT(hdr);
+			break;
+		case MADT_SIGNATURE:
+			ParseMADT(hdr);
+			break;
+		case HPET_SIGNATURE:
+			ParseHPET(hdr);
+			break;
+		case MCFG_SIGNATURE:
+			ParseMCFG(hdr);
+			break;
+	}
 }
 
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
@@ -127,8 +185,8 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 
 	for (UINTN i = 0; i < config_entries; i++) {
 		if (CompareGuid(&config_table[i].VendorGuid, &gEfiAcpiTableGuid) == 0) {
-			void *acpi_table = config_table[i].VendorTable;
-			if (CompareMem(acpi_table, "RSD PTR ", 8) == 0) {
+			UINTN *acpi_table = config_table[i].VendorTable;
+			if (*acpi_table == RSD_PTR_SIGNATURE) {
 				rsdp_addr = acpi_table;
 			}
 		}
@@ -138,6 +196,28 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 		error(L"Couldn't find ACPI RSDP address.", SystemTable);
 
 	ACPI_RSDP *rsdp = (ACPI_RSDP *)rsdp_addr;
+	ACPI_HEADER *rsdt = (ACPI_HEADER *)(UINTN)rsdp->rsdt_address;
+
+	if (rsdt != NULL && *(UINT32 *)rsdt == RSDT_SIGNATURE) {
+		UINT32 *p = (UINT32 *)(rsdt + 1);
+		UINT32 *end = (UINT32 *)((UINT8 *)rsdt + rsdt->length);
+
+		while (p < end) {
+			UINT32 address = *p++;
+			ParseDT((ACPI_HEADER *)(UINTN)address);
+		}
+	}
+
+	if (FADT == NULL)
+		error(L"Couldn't find ACPI FADT address.", SystemTable);
+	if (!slp_set)
+		error(L"Did not set SLP values.", SystemTable);
+
+	PrintUINTNHex(SLP_EN, SystemTable);
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"   ");
+	PrintUINTNHex(SLP_TYPa, SystemTable);
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"   ");
+	PrintUINTNHex(SLP_TYPb, SystemTable);
 
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;
@@ -166,8 +246,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	// Printing before ExitBootServices makes it fail?
 	if (SystemTable->BootServices->ExitBootServices(ImageHandle, memoryMapKey) != EFI_SUCCESS)
 		error(L"ExitBootServices failed.", SystemTable);
-
-	*(unsigned char *)0x150000 = 0x69;
 
 	for (; ; );
 	return EFI_SUCCESS;
