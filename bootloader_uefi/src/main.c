@@ -201,6 +201,91 @@ void ParseDT(ACPI_HEADER *hdr) {
 	}
 }
 
+EFI_FILE_HANDLE GetVolume(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
+	EFI_LOADED_IMAGE *loaded_image = NULL;
+	EFI_GUID lip_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+	EFI_FILE_IO_INTERFACE *io_volume;
+	EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+	EFI_FILE_HANDLE volume;
+	EFI_STATUS status = EFI_SUCCESS;
+
+	if (SystemTable->BootServices->HandleProtocol(ImageHandle, &lip_guid, (VOID **)&loaded_image) != EFI_SUCCESS)
+		error(L"Failed to get loaded image protocol interface.", SystemTable);
+	if (SystemTable->BootServices->HandleProtocol(loaded_image->DeviceHandle, &fs_guid, (VOID *)&io_volume) != EFI_SUCCESS)
+		error(L"Failed to get the volume handle.", SystemTable);
+	if (io_volume->OpenVolume(io_volume, &volume) != EFI_SUCCESS)
+		error(L"Failed to open the volume.", SystemTable);
+
+	return volume;
+}
+
+VOID *AllocatePool(UINTN Size, EFI_SYSTEM_TABLE *SystemTable) {
+	EFI_STATUS status;
+	VOID *p;
+
+	status = SystemTable->BootServices->AllocatePool(EfiLoaderData, Size, &p);
+	if (EFI_ERROR(status)) {
+		//DEBUG((D_ERROR, "AllocatePool: out of pool  %x\n", Status));
+		p = NULL;
+	}
+	return p;
+}
+
+BOOLEAN GrowBuffer(EFI_STATUS *Status, VOID **Buffer, UINTN BufferSize, EFI_SYSTEM_TABLE *SystemTable) {
+	BOOLEAN         TryAgain;
+
+	if (!*Buffer && BufferSize) {
+		*Status = EFI_BUFFER_TOO_SMALL;
+	}
+		
+	TryAgain = FALSE;
+	if (*Status == EFI_BUFFER_TOO_SMALL) {
+		if (*Buffer) {
+			SystemTable->BootServices->FreePool (*Buffer);
+		}
+
+		*Buffer = AllocatePool(BufferSize, SystemTable);
+
+		if (*Buffer) {
+			TryAgain = TRUE;
+		} else {    
+			*Status = EFI_OUT_OF_RESOURCES;
+		} 
+	}
+
+	if (!TryAgain && EFI_ERROR(*Status) && *Buffer) {
+		SystemTable->BootServices->FreePool (*Buffer);
+		*Buffer = NULL;
+	}
+
+	return TryAgain;
+}
+
+EFI_FILE_INFO *LibFileInfo(EFI_FILE_HANDLE FHand, EFI_SYSTEM_TABLE *SystemTable) {
+	EFI_STATUS Status = EFI_SUCCESS;
+	EFI_FILE_INFO *Buffer = NULL;
+	static UINTN BufferSize = SIZE_OF_EFI_FILE_INFO + 200;
+	static EFI_GUID GenericFileInfo = EFI_FILE_INFO_ID;
+
+	while (GrowBuffer (&Status, (VOID **) &Buffer, BufferSize, SystemTable)) {
+	Status = FHand->GetInfo(
+			FHand,
+			&GenericFileInfo,
+			&BufferSize,
+			Buffer
+		);
+	}
+
+	return Buffer;
+}
+
+UINT64 FileSize(EFI_FILE_HANDLE FileHandle, EFI_SYSTEM_TABLE *SystemTable) {
+	EFI_FILE_INFO *file_info = LibFileInfo(FileHandle, SystemTable);
+	UINT64 ret = file_info->FileSize;
+	SystemTable->BootServices->FreePool(file_info);
+	return ret;
+}
+
 EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	SystemTable->ConOut->ClearScreen(SystemTable->ConOut);
 
@@ -250,6 +335,22 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 		PrintUINTN(cpu_core_apic_ids[i], SystemTable);
 		SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n\r");
 	}
+
+	EFI_FILE_HANDLE volume = GetVolume(ImageHandle, SystemTable);
+	EFI_FILE_HANDLE file_handle;
+	CHAR16 *file_name = L"core_start.bin";
+
+	volume->Open(volume, &file_handle, file_name, EFI_FILE_MODE_READ, EFI_FILE_READ_ONLY | EFI_FILE_HIDDEN | EFI_FILE_SYSTEM);
+	if (file_handle == NULL)
+		error(L"Failed to open core_start.bin", SystemTable);
+
+	EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+
+	PrintUINTN((UINTN)FileSize(file_handle, SystemTable), SystemTable);
+	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n\r");
+
+	if (file_handle->Close(file_handle) != EFI_SUCCESS)
+		error(L"Failed to close core_start.bin", SystemTable);
 
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;

@@ -9,6 +9,7 @@ all:
 	sudo mount -o loop OROS.img SYS/
 	sudo mkdir -p SYS/EFI/BOOT/
 	sudo cp bootloader_uefi/obj/BOOTX64.EFI SYS/EFI/BOOT/
+	sudo cp bootloader_uefi/obj/core_start.asm.o SYS/core_start.bin
 	sudo umount SYS
 	sudo rm -rf SYS/
 
@@ -16,4 +17,5 @@ all:
 
 clean:
 	$(MAKE) -C bootloader_uefi clean
-	rm OROS.img
+	rm -f OROS.img
+	sudo rm -rf SYS/
