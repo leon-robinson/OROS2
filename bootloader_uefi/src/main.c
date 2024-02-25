@@ -1,6 +1,8 @@
 #include <types.h>
 #include <gnu-efi/efi.h>
 #include <acpi.h>
+#include <paging.h>
+#include <x86.h>
 
 #define DEBUG
 #ifdef DEBUG
@@ -345,12 +347,21 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 		error(L"Failed to open core_start.bin", SystemTable);
 
 	EFI_GUID file_info_guid = EFI_FILE_INFO_ID;
+	UINT64 read_size = FileSize(file_handle, SystemTable);
+	UINT8 *read_buffer = (UINT8 *)0x60000; // Trampoline location.
 
-	PrintUINTN((UINTN)FileSize(file_handle, SystemTable), SystemTable);
-	SystemTable->ConOut->OutputString(SystemTable->ConOut, L"\n\r");
+	if (file_handle->Read(file_handle, &read_size, read_buffer) != EFI_SUCCESS)
+		error(L"Failed to read from core_start.bin", SystemTable);
 
 	if (file_handle->Close(file_handle) != EFI_SUCCESS)
 		error(L"Failed to close core_start.bin", SystemTable);
+
+	uint64 *pml4 = (uint64 *)0x51000;
+	SystemTable->BootServices->SetMem(pml4, 0x1000, 0x00);
+
+	uint64 i = 0;
+	for (i = 0x1000; i < 1024ULL * 1024ULL * 1024ULL * 2UL; i += 0x1000)
+		map((uint64)pml4, i, i, false, SystemTable);
 
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;
@@ -379,6 +390,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	// Printing before ExitBootServices makes it fail?
 	if (SystemTable->BootServices->ExitBootServices(ImageHandle, memoryMapKey) != EFI_SUCCESS)
 		error(L"ExitBootServices failed.", SystemTable);
+
+	// --- POST EXIT BOOT SERVICES.
+	set_cr3((uint64)pml4);
 
 	for (; ; );
 	return EFI_SUCCESS;
