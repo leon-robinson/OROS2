@@ -8,6 +8,7 @@ typedef int int32;
 typedef unsigned int uint32;
 typedef long long int64;
 typedef unsigned long long uint64;
+typedef unsigned long long uintptr;
 
 #ifndef __cplusplus
 typedef unsigned char bool;

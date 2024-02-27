@@ -3,6 +3,8 @@
 #include <acpi.h>
 #include <paging.h>
 #include <x86.h>
+#include <smp.h>
+#include <idt.h>
 
 #define DEBUG
 #ifdef DEBUG
@@ -363,6 +365,9 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 	for (i = 0x1000; i < 1024ULL * 1024ULL * 1024ULL * 2UL; i += 0x1000)
 		map((uint64)pml4, i, i, false, SystemTable);
 
+	idt_init();
+	smp_init();
+
 	UINTN memoryMapSize = 0;
 	EFI_MEMORY_DESCRIPTOR *memoryMap = NULL;
 	UINTN memoryMapKey = 0;
@@ -392,7 +397,6 @@ EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable) {
 		error(L"ExitBootServices failed.", SystemTable);
 
 	// --- POST EXIT BOOT SERVICES.
-	set_cr3((uint64)pml4);
 
 	for (; ; );
 	return EFI_SUCCESS;
